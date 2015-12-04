@@ -1,0 +1,1 @@
+{"db_user": "postgres", "seed_list": "test_seed.csv", "file_save_name": "0", "path_to_db_pass": "sensitive_db.txt", "path_to_file_save": "temp_dump", "db_host": "localhost", "database": "scraper", "path_to_log": "temp_log"}
