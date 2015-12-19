@@ -10,10 +10,12 @@ from SCRAPER import SCRAPER
 from DB import DBCONN
 from LOGGING import LOG
 
+import websites_to_ignore
+
 ##(DONE)Should read a config file (if none exists, walk user through creation, and save as json)
 ####(DONE)Config points to database, file save directory, initial seed list file, path to log file name,
 ##(DONE)If database table doesn't exist, create one
-####Need to read in seed list and add to cache
+#### (DONE) Need to read in seed list and add to cache
 ##If file directory doesn't exist, raise error
 ##(DONE - by default)If seed list file doesn't exist, raise error
 ##(DONE - but not explicit) If path to log file doesn't exist, raise error
@@ -26,6 +28,8 @@ class SCRAPING_INSTANCE:
         
         #self.log = LOG(self.createFiName(self.config['path_to_log'], 'log'))
         self.log = LOG('temp_log/test.csv')
+
+        self.scraper = SCRAPER()
 
         with open(self.config['path_to_db_pass']) as fi:
             dbPass = fi.read().strip()
@@ -41,7 +45,9 @@ class SCRAPING_INSTANCE:
         except psycopg2.ProgrammingError as err:
             if 'relation "cache" does not exist' in str(err):
                 self.createTableCache()
-                self.readSeedList()
+                self.createTableLinkTrack()
+                seedLi = self.readSeedList()
+                self.updateCacheNewUrls(seedLi)
             else:
                 raise ValueError("psycopg2 error: {0}".format(str(err)))
         
@@ -78,17 +84,98 @@ class SCRAPING_INSTANCE:
     def writeConfig(self):
         with open(self.configFiName, 'w') as fi:
             fi.write(json.dumps(self.config))
-
-    def readSeedList(self):
-        pass
             
     def createTableCache(self):
         with open("SQL_QUERIES/createCache.txt") as fi:
             query = fi.read().strip()
         self.db.cur.execute(query)
 
-    def updateCacheNewUrls(self, newLi):
-        pass
+    def createTableLinkTrack(self):
+        with open("SQL_QUERIES/createLinkTrack.txt") as fi:
+            query = fi.read().strip()
+        self.db.cur.execute(query)
+
+    def updateCacheNewUrls(self, newLi, origin = None):
+        count = 0
+        notUrl = 0
+        external = 0
+        tempScraper = SCRAPER()##To access breakdownURL function
+        for url in newLi:
+            try:
+                tempScraper.breakDownURL(url)
+                try:
+                    if tempScraper.domain not in self.scraper.term:
+                        external += 1
+                except AttributeError:
+                    pass
+                try:
+                    self.db.cur.execute("INSERT INTO cache (url, protocol, domain, status) VALUES (%s, %s, %s, %s);",
+                                         (url,
+                                          tempScraper.protocol,
+                                          tempScraper.domain,
+                                          'todo',))
+                    count+=1
+                except psycopg2.IntegrityError:
+                    pass
+            except ValueError:
+                notUrl+=1
+        if origin is not None:
+            with open("SQL_QUERIES/insertIntoLinkTrack.txt") as fi:
+                query = fi.read().strip()
+            self.db.cur.execute(query,
+                                (origin, len(newLi), count, notUrl, external,))
+        print("Saved {0} of {1} total viable links".format(count, len(newLi)-notUrl))
+
+    def updateCacheDownload(self, ident):
+        with open('SQL_QUERIES/updateCache_download.txt') as fi:
+            query = fi.read().strip()
+        self.db.cur.execute(query,
+                            (datetime.datetime.now(),##Datetime of download
+                             'Mozilla/4.0 (compatible; MSIE 5.5; Windows NT)',##Should be dynamic
+                             self.scraper.term,##url_returned
+                             self.scraper.protocol,##protocol_returned
+                             self.scraper.domain,##domain returned
+                             self.scraper.info['Server'],##server returned
+                             self.scraper.info['Date'], ##Date on server...in scraper.info dict
+                             self.scraper.info['Content-Type'], ##contenttype
+                             self.scraper.info['Connection'], ##connection
+                             self.scraper.info_str,##Full response
+                             ident,))
+
+    def updateCacheDownload_Fail(self, record_id, reason = "Unknown"):
+        if 'invalid record' in reason:
+            self.db.cur.execute("UPDATE cache SET status = 'failed', status_msg = %s WHERE id = %s;",
+                                (reason, record_id,))
+        elif 'This item is a file object' in reason:
+            self.db.cur.execute("UPDATE cache SET status = 'ignore', status_msg = %s WHERE id = %s;",
+                                (reason, record_id))
+        elif 'Ignored website' == reason:
+            self.db.cur.execute("UPDATE cache SET status = 'ignore', status_msg = %s WHERE id = %s;",
+                                (reason, record_id,))
+        elif 'Failed to goOnline' == reason:
+            self.db.cur.execute("UPDATE cache SET status = 'failed', status_msg = %s WHERE id = %s;",
+                                (reason, record_id,))
+        elif 'Could not access page' == reason:
+            self.db.cur.execute("UPDATE cache SET status = 'failed', status_msg = %s WHERE id = %s;",
+                                (self.scraper.ErrorMessage, record_id,))
+        elif 'Parse error' == reason:
+            with open('SQL_QUERIES/updateCache_download.txt') as fi:
+                query = fi.read().strip()
+            self.db.cur.execute(query,
+                                (reason,##status_msg
+                                 datetime.datetime.now(),##Datetime of download
+                                 'Mozilla/4.0 (compatible; MSIE 5.5; Windows NT)',##Should be dynamic
+                                 self.scraper.term,##url_returned
+                                 self.scraper.protocol,##protocol_returned
+                                 self.scraper.domain,##domain returned
+                                 self.scraper.info['Server'],##server returned
+                                 self.scraper.info['Date'], ##Date on server...in scraper.info dict
+                                 self.scraper.info['Content-Type'], ##contenttype
+                                 self.scraper.info['Connection'], ##connection
+                                 self.scraper.info_str,##Full response
+                                 record_id,))
+        else:
+            raise AttributeError("REASON FOR DOWNLOAD FAIL NOT VALID: {0}".format(reason))
 
     def readSeedList(self):
         seedList = []
@@ -107,7 +194,67 @@ class SCRAPING_INSTANCE:
                     seedList.append(row[k])
         return seedList
 
+    def makeToDoLi(self, low, high):
+        self.db.cur.execute("SELECT id, url FROM cache WHERE status='todo' AND (id>%s AND id <%s);",
+                            (low, high,))
+        self.toDoLi = self.db.cur.fetchall()
+        #print(self.toDoLi)
+
+    def checkIgnore(self, url):
+        for x in website_to_ignore.ignore:
+            if x in url:
+                return True
+        return False
+
+    def iterateThroughToDo(self):
+        for urlRecord in self.toDoLi:
+            try:
+                ident = urlRecord[0]
+                url = urlRecord[1]
+                if self.checkIgnore(url)
+                    try:
+                        result = self.scraper.goOnline(url)
+                        if result is not None:
+                            try:
+                                self.scraper.breakDownURL(url)
+                                self.scraper.parseRequestObj(result)
+                                self.updateCacheDownload(ident)
+                                self.updateCacheNewUrls(self.scraper.newToDoLi,
+                                                        origin = ident)
+                            except:
+                                updateCacheDownload_fail(ident, 'Parse Error')
+                        elif 'This item is a file object' in self.scraper.ErrorMessage:
+                            updateCacheDownload_fail(ident, self.scraper.ErrorMessage)
+                        else:
+                            updateCacheDownload_fail(ident, 'Could not access page')
+                            ##todo: need to handle this error
+                    except:
+                        ##todo: need to handle this error
+                        updateCacheDownload_fail(ident, 'Error making url request')
+                else:
+                    updateCacheDownload_fail(ident, 'Ignored website')
+            except IndexError:
+                updateCacheDownload_fail(ident, 'Invalid record in database {0}'.format(str(urlRecord))
+            break
+
+class EXECUTOR:
+    def __init__(self, configFiName):
+        ##todo: iteratively grab to do li, filtering as needed
+        self.baseInstance = SCRAPING_INSTANCE(configFiName)
+        self.maxId = self.baseInstance.db.getMaxId('id', 'cache')
+        range_low = 0
+        range_high = 100000
+        range_change = 100000
+        while range_low < self.maxId:
+            self.baseInstance.makeToDoLi(range_low, range_high)
+            self.baseInstance.iterateThroughToDo()
+            self.maxId = self.baseInstance.db.getMaxId('id', 'cache')
+            range_low = range_high
+            range_high += range_change
+            break
+
 db = DBCONN('scraper', 'localhost', 'postgres', 'd11Rigent')
-db.cur.execute("DROP TABLE cache;")
-##db.createTableCache()
-si = SCRAPING_INSTANCE('test_config.json')
+db.cur.execute("DROP TABLE cache CASCADE;")
+db.cur.execute("DROP TABLE link_track;")
+#si = SCRAPING_INSTANCE('test_config.json')
+executor = EXECUTOR('test_config.json')

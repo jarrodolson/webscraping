@@ -1,0 +1,8 @@
+CREATE TABLE link_track (
+	id serial PRIMARY KEY,
+	id_cache int references cache,
+	total_links int,
+	new_links int,
+	not_valid_links int,
+	external_links int
+);

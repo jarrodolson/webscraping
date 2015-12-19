@@ -1,0 +1,14 @@
+UPDATE cache SET
+    status = 'failed',
+	status_msg = %s,
+	download_date = %s,
+	user_agent = %s,
+	url_returned = %s,
+	protocol_returned = %s,
+	domain_returned = %s,
+	server_returned = %s,
+	date_on_server = %s,
+	content_type = %s,
+	connection = %s,
+	response = %s
+  WHERE id = %s;

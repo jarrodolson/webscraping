@@ -18,4 +18,7 @@ class DBCONN:
             self.conn = None
             self.cur = None
         
-    
+    def getMaxId(self, idColName, tableName):
+        self.cur.execute("SELECT MAX({0}) FROM {1};".format(idColName, tableName))
+        maxId = self.cur.fetchone()[0]
+        return maxId

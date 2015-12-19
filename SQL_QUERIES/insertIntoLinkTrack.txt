@@ -1,0 +1,4 @@
+INSERT INTO link_track
+  (id_cache, total_links, new_links, not_valid_links, external_links)
+     VALUES
+  (%s, %s, %s, %s, %s);
