@@ -10,5 +10,8 @@ UPDATE cache SET
 	date_on_server = %s,
 	content_type = %s,
 	connection = %s,
-	response = %s
+	response = %s,
+	full_txt = %s,
+	full_txt_hash = md5(%s),
+	body_clean = %s
   WHERE id = %s;

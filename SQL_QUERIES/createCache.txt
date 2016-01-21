@@ -18,7 +18,5 @@ CREATE TABLE cache (
 	response text,
 	full_txt text,
 	full_txt_hash text UNIQUE,
-	head text,
-	body text,
 	body_clean text
 );

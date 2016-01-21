@@ -1,7 +1,7 @@
 import unittest
 import csv
 import os
-import __init__ as x
+import LOGGING as x
 
 def readCsv(finame):
     data = []
